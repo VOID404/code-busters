@@ -85,7 +85,17 @@ parseEntity = do
             , entityValue = value
             }
 
-splitTeams :: Team -> [Entity] -> ([Buster], [Enemy], [Ghost])
+type Teams = ([Buster], [Enemy], [Ghost])
+
+parseTeams :: Team -> IO Teams
+parseTeams myTeam = do
+    input_line <- getLine
+    -- the number of busters and ghosts visible to you
+    let entitiesN = read input_line :: Int
+    splitTeams myTeam
+        <$> replicateM entitiesN parseEntity
+
+splitTeams :: Team -> [Entity] -> Teams
 splitTeams myTeam = rec [] [] []
   where
     rec bs es gs [] = (reverse bs, reverse es, reverse gs)
@@ -100,8 +110,10 @@ data Game = Game
     , myTeam :: Team
     }
 
-gameLogic :: Game -> [Buster] -> [Ghost] -> [Enemy] -> [Action]
-gameLogic Game{myTeam} busters ghosts _ = map process busters
+data AlgState = AlgInit
+
+gameLogic :: Game -> AlgState -> Teams -> (AlgState, [Action])
+gameLogic Game{myTeam} s (busters, _, ghosts) = (s, map process busters)
   where
     process b@Entity{entityState}
         | entityState == Carrying =
@@ -127,6 +139,13 @@ gameLogic Game{myTeam} busters ghosts _ = map process busters
     base = basePosition myTeam
     center = Position 8000 4500
 
+gameLoop :: Game -> AlgState -> IO ()
+gameLoop g@Game{myTeam} s = do
+    teams <- parseTeams myTeam
+    let (newAlg, actions) = gameLogic g s teams
+    mapM_ print actions
+    gameLoop g newAlg
+
 main :: IO ()
 main = do
     hSetBuffering stdout NoBuffering -- DO NOT REMOVE
@@ -146,16 +165,7 @@ main = do
     let game = Game{bustersPerPlayer, ghostCount, myTeam}
 
     -- game loop
-    forever $ do
-        input_line <- getLine
-        -- the number of busters and ghosts visible to you
-        let entitiesN = read input_line :: Int
-
-        (busters, enemies, ghosts) <-
-            splitTeams myTeam
-                <$> replicateM entitiesN parseEntity
-
-        mapM_ print $ gameLogic game busters ghosts enemies
+    gameLoop game AlgInit
 
 -- hPutStrLn stderr "Debug messages..."
 -- MOVE x y | BUST id | RELEASE
