@@ -6,6 +6,10 @@ import Data.Foldable (minimumBy)
 import System.IO
 import Text.Printf (printf)
 
+-- ########## INTERFACE DATA ##########
+-- this data represents game state, as received on stdin
+-- and player actions, as sent on stdout
+
 data Action
     = ActionMove Position
     | ActionBust Int
@@ -110,23 +114,33 @@ data Game = Game
     , myTeam :: Team
     }
 
-data AlgState = AlgInit
+-- ########## ALGORITHM ##########
+
+data AlgState
+    = AlgInit
+    | AlgCorners [Position]
 
 gameLogic :: Game -> AlgState -> Teams -> (AlgState, [Action])
-gameLogic Game{myTeam} s (busters, _, ghosts) = (s, map process busters)
+gameLogic Game{myTeam} a@(AlgCorners _) (busters, _, ghosts) = process busters [] a
   where
-    process b@Entity{entityState}
+    process :: [Buster] -> [Action] -> AlgState -> (AlgState, [Action])
+    process [] acts state = (state, reverse acts)
+    process (b@Entity{entityState} : bs) acts alg@(AlgCorners (c : cs))
         | entityState == Carrying =
             if baseDist < 1500
-                then ActionRelease
-                else ActionMove base
-        | null ghosts = ActionMove center
-        | ghostDist < 1760 = ActionBust $ entityID ghost
-        | otherwise = ActionMove $ entityPos ghost
+                then process bs (ActionRelease : acts) alg
+                else process bs (ActionMove base : acts) alg
+        | null ghosts =
+            if cornerDist < 200
+                then process (b : bs) acts (AlgCorners cs)
+                else process bs (ActionMove c : acts) alg
+        | ghostDist < 1760 = process bs (ActionBust (entityID ghost) : acts) alg
+        | otherwise = process bs (ActionMove (entityPos ghost) : acts) alg
       where
         ghost = closestGhost b
         ghostDist = distance (entityPos b) (entityPos ghost)
         baseDist = distance (entityPos b) base
+        cornerDist = distance (entityPos b) c
 
     closestGhost :: Buster -> Ghost
     closestGhost b = minimumBy (compareDistance b) ghosts
@@ -140,11 +154,23 @@ gameLogic Game{myTeam} s (busters, _, ghosts) = (s, map process busters)
     center = Position 8000 4500
 
 gameLoop :: Game -> AlgState -> IO ()
+gameLoop g AlgInit =
+    gameLoop g (AlgCorners corners)
+  where
+    corners =
+        cycle
+            [ Position 2200 2200
+            , Position (16000 - 2200) 2200
+            , Position (16000 - 2200) (9000 - 2200)
+            , Position 2200 (9000 - 2200)
+            ]
 gameLoop g@Game{myTeam} s = do
     teams <- parseTeams myTeam
     let (newAlg, actions) = gameLogic g s teams
     mapM_ print actions
     gameLoop g newAlg
+
+-- ########## MAIN LOOP ##########
 
 main :: IO ()
 main = do
